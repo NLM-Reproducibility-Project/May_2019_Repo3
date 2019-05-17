@@ -1,0 +1,330 @@
+---
+title: "Correlation 10min pA+ data with decay rates and txn measures"
+author: "Manfred Schmid"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+`r format(Sys.time(), "%d %B, %Y")`
+
+```{r setup, echo=TRUE}
+knitr::opts_chunk$set(fig.width=12, fig.height=8, 
+                      fig.path=paste0('Figures_correlation_with_halflife_txn/'), 
+                      dev='pdf', 
+                      echo=TRUE, warning=FALSE, message=FALSE, 
+                      error=TRUE)
+```
+
+
+
+```{r load packages, echo=T, warning=F, message=F}
+suppressWarnings(library(tidyverse))
+suppressWarnings(library(magrittr))
+suppressWarnings(library(DESeq2))
+```
+
+
+## log2FC and DR estimates from 10min data
+
+
+#### Load decay rate estimates from 10min data
+```{r}
+load('../../data/10min_DR_with_confint.RData', verbose=TRUE)
+
+DR_cis
+```
+
+
+#### Load rapamycin-dependent log2FC from 10min data
+
+```{r}
+load('../../data/DESeq2_10min_results_df_v2.RData', verbose=TRUE)
+
+dds_results_df
+```
+
+
+
+## Loading and comparing to published decay rate datasets
+
+from Markdown *Published_decay_measures.Rmd*
+```{r}
+load(file='../../data/published_decay_estimates.RData', verbose=TRUE)
+
+DR_literature
+```
+
+
+## Correlation with Decay Rates
+
+
+#### combine mRNA data for the different datasets
+```{r}
+(LFC_spread <- dds_results_df %>%
+  filter(type == 'ORF-T') %>%
+  dplyr::select(id, name, type, log2FoldChange, comparison) %>%
+  spread(comparison, log2FoldChange))
+```
+
+```{r}
+(DR_spread <- DR_cis %>%
+  ungroup %>%
+  filter(rapa == 0) %>% 
+  mutate(strain=paste0('DR_', strain)) %>%
+  dplyr::select(strain,id,DR) %>% 
+  spread(strain,DR))
+```
+
+
+```{r}
+(mRNAs_spread <- left_join(LFC_spread, DR_spread) %>%
+  left_join(., DR_literature)) 
+```
+
+
+
+#### correlation to distance fun
+
+```{r}
+cor_dist <- function(cor) {
+  as.dist((1 - cor)/2)
+}
+```
+
+#### spearman correlation matrix
+
+```{r}
+(spearman_cor_mat <- mRNAs_spread %>%
+  dplyr::select(-name, -id, -type, -Presnyak_pA_DR) %>%
+  as.matrix %>%
+  na.omit %>%
+  cor(., method='spearman'))
+```
+
+
+```{r spearman correlation txn hclust all mRNAs}
+spearman_dists <- cor_dist(spearman_cor_mat)
+
+hc <- hclust(spearman_dists)
+
+plot(hc)
+```
+
+
+```{r}
+spearman_cor_df <- spearman_cor_mat %>%
+  data.frame %>%
+  rownames_to_column(var='study1') %>%
+  gather(study2, cor, -study1) %>%
+  tbl_df
+```
+
+```{r}
+study_order <- c("Mex_ip_15rel0", "Nab_ip_15rel0", "Mex_in_15rel0", "Nab_in_15rel0", 
+              "Presnyak_total_DR", "Miller_DR", "Sun_DR",
+              "DR_Mex", "DR_Nab")
+```
+
+```{r spearman correlation matrix all mRNAs}
+spearman_cor_mat %>%
+  data.frame %>%
+  rownames_to_column(var='study1') %>%
+  gather(study2, cor, -study1) %>%
+  tbl_df %>%
+  mutate(study1 = factor(study1, levels=study_order),
+         study2 = factor(study2, levels=study_order)) %>%
+ggplot(., 
+       aes(x=study1, y=study2, fill=cor)) +
+  geom_tile() +
+  theme(axis.text.x=element_text(angle=45, hjust=1)) +
+  scale_fill_gradient2(low='red', mid='white', high='blue', limits=c(-1,1)) +
+  geom_text(aes(label=round(cor,2)))
+```
+
+
+
+
+### only genes sig over background
+
+```{r}
+load('../../data/DESeq2_10min_IP_rel_neg_results_df_v2.RData', verbose=TRUE)
+
+dds_rel_neg_results_df
+```
+
+
+```{r}
+(ip_sig_over_bkgd <- filter(dds_rel_neg_results_df,
+       log2FoldChange > 0, padj < .1,
+       type == 'ORF-T'
+       ) %>%
+  dplyr::select(name, comparison))
+```
+
+
+#### IPs only gene sig over background at 0
+
+```{r}
+ids_mex_sig0 <- filter(ip_sig_over_bkgd, comparison == 'Mex_ip_0relneg') %$% name
+
+ids_nab_sig0 <- filter(ip_sig_over_bkgd, comparison == 'Nab_ip_0relneg') %$% name
+  
+ids_both_sig0 <- intersect(ids_mex_sig0, ids_nab_sig0)
+
+length(ids_both_sig0)
+```
+
+
+```{r}
+spearman_cor_mat_sig0 <- mRNAs_spread %>%
+   filter(name %in% ids_both_sig0) %>%
+  dplyr::select(-name, -id, -type, -Presnyak_pA_DR) %>%
+  as.matrix %>%
+  na.omit %>%
+  cor(., method='spearman') 
+```
+
+```{r spearman correlation hclust sig over BG}
+spearman_dists_sig0 <- cor_dist(spearman_cor_mat_sig0)
+
+hc <- hclust(spearman_dists_sig0)
+
+plot(hc)
+```
+
+
+```{r spearman correlation matrix only genes sig over bkgd 0}
+spearman_cor_mat_sig0 %>%
+  data.frame %>%
+  rownames_to_column(var='study1') %>%
+  gather(study2, cor, -study1) %>%
+  tbl_df %>%
+  mutate(study1 = factor(study1, levels=study_order),
+         study2 = factor(study2, levels=study_order)) %>%
+ggplot(., 
+       aes(x=study1, y=study2, fill=cor)) +
+  geom_tile() +
+  theme(axis.text.x=element_text(angle=45, hjust=1)) +
+  scale_fill_gradient2(low='red', mid='white', high='blue', limits=c(-1,1)) +
+  geom_text(aes(label=round(cor,2)))
+```
+
+
+
+## Correlation with Transcription
+
+load the transcription estimates from Markdown Published_txn_estimates_gene_body_counting.Rmd
+
+```{r}
+load(file='../../data/published_gene_body_txn_estimates.RData', verbose=TRUE)
+
+txn_estimates
+```
+
+
+```{r}
+(txn_estimates %<>%
+  separate(name, c('id', 'type', 'name', 'common_name'), sep=':') %>%
+  filter(type == 'ORF-T'))
+```
+
+
+```{r}
+mRNAs_spread %<>%
+   dplyr::select(-contains('DR')) %>%
+   left_join(txn_estimates, .)
+```
+
+
+```{r}
+(spearman_cor_mat <- mRNAs_spread %>%
+  dplyr::select(-name, -id, -type, -common_name, -size) %>%
+  as.matrix %>%
+  na.omit %>%
+  cor(., method='spearman'))
+```
+
+
+```{r spearman correlation hclust all mRNAs}
+spearman_dists <- cor_dist(spearman_cor_mat)
+
+hc <- hclust(spearman_dists)
+
+plot(hc)
+```
+
+
+```{r}
+spearman_cor_df <- spearman_cor_mat %>%
+  data.frame %>%
+  rownames_to_column(var='study1') %>%
+  gather(study2, cor, -study1) %>%
+  tbl_df
+```
+
+```{r}
+study_order <- c("Mex_ip_15rel0", "Nab_ip_15rel0", "Mex_in_15rel0", "Nab_in_15rel0", 
+                 "NETseq_mean", "CRAC_mean", "Chip2_mean", "Chipseq_mean")
+```
+
+```{r spearman correlation with txn matrix all mRNAs}
+spearman_cor_mat %>%
+  data.frame %>%
+  rownames_to_column(var='study1') %>%
+  gather(study2, cor, -study1) %>%
+  tbl_df %>%
+  mutate(study1 = factor(study1, levels=study_order),
+         study2 = factor(study2, levels=study_order)) %>%
+ggplot(., 
+       aes(x=study1, y=study2, fill=cor)) +
+  geom_tile() +
+  theme(axis.text.x=element_text(angle=45, hjust=1)) +
+  scale_fill_gradient2(low='red', mid='white', high='blue', limits=c(-1,1)) +
+  geom_text(aes(label=round(cor,2)))
+```
+
+
+
+
+### only genes sig over background
+
+```{r}
+spearman_cor_mat_sig0 <- mRNAs_spread %>%
+  filter(name %in% ids_both_sig0) %>%
+  dplyr::select(-name, -id, -type, -common_name, -size) %>%
+  as.matrix %>%
+  na.omit %>%
+  cor(., method='spearman') 
+```
+
+```{r spearman correlation txn hclust sig over BG}
+spearman_dists_sig0 <- cor_dist(spearman_cor_mat_sig0)
+
+hc <- hclust(spearman_dists_sig0)
+
+plot(hc)
+```
+
+
+```{r spearman correlation txn matrix only genes sig over bkgd 0}
+spearman_cor_mat_sig0 %>%
+  data.frame %>%
+  rownames_to_column(var='study1') %>%
+  gather(study2, cor, -study1) %>%
+  tbl_df %>%
+  mutate(study1 = factor(study1, levels=study_order),
+         study2 = factor(study2, levels=study_order)) %>%
+ggplot(., 
+       aes(x=study1, y=study2, fill=cor)) +
+  geom_tile() +
+  theme(axis.text.x=element_text(angle=45, hjust=1)) +
+  scale_fill_gradient2(low='red', mid='white', high='blue', limits=c(-1,1)) +
+  geom_text(aes(label=round(cor,2)))
+```
+
+
+```{r}
+sessionInfo()
+```
+

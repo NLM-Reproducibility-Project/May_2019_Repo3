@@ -1,0 +1,227 @@
+---
+title: "README"
+author: "Manfred Schmid"
+output: html_document
+---
+`r format(Sys.time(), "%d %B, %Y")`
+
+
+
+## GENERAL COMMENTS
+
++ Everything is in style of RMarkdown (.Rmd) files, containing all relevant bash, python and R code.
++ Scripts try to focus on code relevant for the publications, but contain at many places code that is not directly relevant for the publication. For examples, many of the early analysis includes samples that are not included in the final analysis (ie 70min rapamycin).
++ original analysis was done partially on the local computing cluster "genome.au.dk" but mostly on my local Mac.
++ much of the code loads local files not included here to save space.
++ local R directory was called ../Lexogen_RNAseq_2/RProject
++ subdirectory analysis contains the Rmd files
++ ups: directory structure in Rmd files is relative to RProject folder and may not work relative to the path the files are in the moment.
++ some of the key data intermediates are saved in /data
+
+
+## SAMPLES
+
+Experiments:
+
+1. 10min 4tU labelling:
+    + Regular pA+ 3' end seq:  
+      ++ Nab2-AA and Mex67-AA
+      ++ 0, 15 and 70min rapamycin (70min not analyzed further here)
+      ++ total and 10min 4tU IP RNA
+      ++ negative control with no rapa, no 4tU from both strains, 
+         total and IP samples done
+      ++ everything in triplicate, except neg. control only 1 replicate done
+      
+    + E-PAP treatment + pA+ 3' seq:
+      ++ Nab2-AA x 0 and 70min rapamycin
+      ++ with and without E-PAP treatment
+      ++ total and 10min 4tU IP RNA
+      ++ 1 replicate each 
+      ++ this was a pilot experiment, not analyzed further here 
+
+
+2. 2min 4tU labelling:
+    + Nab2-AA and Mex67-AA
+    + 0, 15 and 70min rapamycin (70min not analyzed further here)
+    + total and 10min 4tU IP RNA
+    + negative control with no rapa, no 4tU from Mex67-AA
+    + Regular pA+ 3' end seq:  
+      ++ total and 10min 4tU IP RNA, only one replicate each done
+    + E-PAP treatment + pA+ 3' seq:
+      ++ total RNA, one replicate and 
+      ++ 10min 4tU IP RNA, triplicates each; except neg control only 1 replicate
+
+
+
+## ANALYSIS PIPELINE
+
+### RAW DATA PROCESSING
+
+(( in analysis/raw_processing ))
+
+Raw data are processed in the following order:  
+
+Same procedure for 10min and 2min 4tU labelling data.
+
+1. QC_and_mapping.Rmd
+    + adapter and quality trimming of raw reads
+    + mapping using STAR aligner
+    + obtain stats from the above steps.
+
+2. GenomicA_masking.Rmd
+    + Criteria for genomic masking
+    + create a bed annotation file for genomic A masking
+    + remove genomic A-mask positions from data.
+
+3. Sp_normalization.Rmd
+    + count S.pombe reads
+    + derive scaling factors using DESeq2
+    + apply to scaling of S. cerevisiae tracks
+    + sanity check that scaling worked OK
+
+4. BGSub.Rmd
+    + Subtract background from 4tU IPs using negative (mock) IP data.
+    + sanity checks
+
+5. pAminus.Rmd
+--> For the 2min 4tU data one extra step is getting the pAminus from pAplusAndMinus.
+    + Subtract [pA+] from [pA+ + pA-] data.
+    + sanity checks  
+    
+6. bedgraph_to_bigwigs.Rmd
+    + for the 2min data create bigwigs from bedgraphs.
+
+6. body_end_counting.Rmd
+    + get gene body and end annotations for mRNAs, SUTs, CUTs and snRNAs 
+      from Xu et al (Steinmetz lab)
+    + get gene body and end annotations for XUTs 
+      from Wery et al (Morillon lab)
+    + counting from non-normalized reads from 10min data for use with DESeq2
+    + counting from normalized reads from 2min data for direct use
+
+7. 2min_body_end_counts_to_R.Rmd
+    + load body_end_counting.Rmd counts for 2min data to R 
+    + sanity checks
+    + scale to length
+    + average over replicates
+    + total singals per annotation type
+    + violin plots signal in body and end pA+ and pA-
+    
+8. Published_txn_measures.Rmd
+    + load published transcription measures from various sources
+    + combine into a single df
+    + correlation of those estimates with each other
+
+9. Published_decay_measures.Rmd
+    + load published decay rate or half-life measures from various sources
+    + combine into a single df
+    + correlation of those estimates with each other
+    
+10. DR_strategy
+    + reasoning and background for DR estimation from data
+
+
+
+### ANALYSIS for Tudek et al. Paper
+
+(( in analysis/Tudek ))
+
+-> uses both 10min 4tU and 2min 4tU data
+
+No specific order:
+
++ DESeq2_10min_data.Rmd
+    ++ Differential expression 15min rapa vs 0min rapa using 
+        S.pombe for normalization.
+    ++ Differential binding ip rel neg. control 
+        for both 0 and 15min rapa IPs, again using 
+        S.pombe for normalization.
+
++ Mex_vs_Nab_scatters_10min_data.Rmd
+    ++ for inputs using DESeq2 results log2FCs as is
+    ++ for IPs using DESeq2 results log2FCs as is
+    ++ for IPs only genes sig over background in rapa == 0min
+    ++ for IPs only genes sig over background at rapa == 0min and 15min
+
++ DR_10min.Rmd
+    ++ estimating decay rates from data
+    ++ includes an approximation for conf.intervals.
+
++ Correlation_10min_data_with_published_halflife_and_txn.Rmd
+    ++ get published decay rate data from Published_decay_measures.Rmd
+    ++ correlate published decay rates with our own data
+    ++ get published transcription data from Published_txn_measures.Rmd
+    ++ correlate published txn estimates with our own data
+    
++ Body_pAMinus_vs_End_pAPlus_2min_data_vs_rapamycin.Rmd
+    ++ violin plots 2min data body pA minus and end pA plus rel rapamycin
+    ++ Wilcoxon rank sum test for relevant comparisons
+
++ termination_decay_correlation.Rmd
+    ++ get metagene matrices of log2FC 15/0 values around TES 
+        2min pA- and pA+ data
+    ++ estimate termination defect
+    ++ order according to termination defect
+    ++ plot heatmaps
+    ++ plot correlations
+
+
+
+### ANALYSIS for Schmid et al. Paper
+
+(( in analysis/Schmid ))
+
+-> uses only 2min 4tU data
+
+No specific order:
+
++ 2min_body_vs_end_plots.Rmd
+    + barplots, signal per type
+    + piecharts, body vs ends
+    + violin plots signal in body and end pA+ and pA-
+  
++ correlation_genebody_pAminus_with_published_txn.Rmd
+    + using averaged data
+    + same as above but for individual replicates without averaging
+    
++ heatmaps.Rmd 
+    ++ mRNA genes, rescaled to 2kb
+    ++ divergent vs tandem mRNA genes, rescaled to 2kb
+    ++ mRNA,XUT,SUT,CUT combined heatmaps unscaled, but sorted by length
+        +++ for 2min data
+        +++ for RNAPII CRAC
+        +++ for NETseq
+        +++ for ChIPseq
+
++ junctions_and_introns.Rmd
+    ++ intron-based heatmaps
+    ++ junction reads coutning
+    ++ junction reads quantification
+    ++ intronic vs exonic signal levels
+
++ nucleosomes.Rmd
+    ++ convert nucleosome positions from Jiang and Pugh
+    ++ get +1 nucleosomes for long genes
+    ++ own data:
+        +++ collect metagene profiles
+        +++ plot metagene profiles
+    ++ CRAC
+    ++ NETseq
+    ++ ChIPseq
+    ++ nucleosome density around +1 nucleosome
+    ++ TSS density around +1 nucleosome
+
++ 2min_snRNA.Rmd
+    ++ heatmaps for snRNA
+    ++ single nucleotide precision around TES
+    ++ decay rates for snRNAs
+    
++ Roy_Chanfreau.Rmd
+    ++ analysis of Roy and Chanfreau pA+ pA+,- data in ctrl and exosome deplete
+
++ DR_2min.Rmd
+    ++ various ways of computing the decay rate
+    ++ DR using ip relative input
+    ++ DR using txn (from ip) rel total 
+    ++ DR using txn (from total) rel total 
+    ++ correlation with published decay rates

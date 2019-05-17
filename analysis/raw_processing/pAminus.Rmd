@@ -1,0 +1,249 @@
+---
+title: "Create pAminus Tracks by Subtraction"
+author: "Manfred Schmid"
+date: "9 August 2017"
+output: html_document
+---
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE, fig.path = 'Figures_pAminus_tracks/', dev='pdf')
+```
+
+```{r, message=FALSE,warning=FALSE}
+suppressWarnings(library('tidyverse'))
+suppressWarnings(library('magrittr'))
+suppressWarnings(library('knitr'))
+```
+
+
+# pAminus = pA++pA- minus pA+
+
+Using S.pombe normalized values: subtract values from pA+ libraries from EPAP libraries  
+ups:
+--> can result in negatives!!  
+--> for IPs this can result in pA- values higher than pA++pA- since pA+ can be negative
+
+uses the *subtract_bedgraph.py* python script as in BGSub.Rmd
+
+
+apply this to all files
+```{bash, eval=FALSE}
+#!/bin/bash
+
+#This script substracts the values at each positions covered in ie the noPap libraries from xPap libraries
+
+## subtract all noPap input positions for filtering from xPap ##
+
+cd /Users/schmidm/Documents/Results/Lexogen_RNAseq_2/STAR_bw/norm_and_pA_filtered_bedgraph/
+
+## input files, each xPap has exactly one matching noPap ...
+for f in norm_xPap_*_input_*.bedgraph
+  do
+    echo $f
+    python ~/ms_tools/MS_Metagene_Tools/subtract_bedgraph.py ${f} ${f/xPap/noPap} \
+      --chunk_size 100000 --value_col 4 -o ${f/xPap_/xPappAminus_}
+  done
+
+
+## ip files, each noPap has 3 matching xPap files, ie the replicates
+## only do the BGsub samples
+for f in norm_xPap_*_ip_*_KevinRoyAfiltered_BGsub.bedgraph
+  do
+    echo $f
+    noPap_file=$(echo ${f/xPap/noPap} | sed s/_2_/_1_/g | sed s/_3_/_1_/g)
+    echo ${noPap_file}
+    python ~/ms_tools/MS_Metagene_Tools/subtract_bedgraph.py ${f} ${noPap_file} \
+      --chunk_size 100000 --value_col 4 -o ${f/xPap_/xPappAminus_}
+  done
+```
+
+
+#### get stats for the effect of pAminus vs pA+
+
+counting signal and positions covered:  
+```{bash, eval = FALSE}
+cd /Users/schmidm/Documents/Results/Lexogen_RNAseq_2/STAR_bw/norm_and_pA_filtered_bedgraph/
+
+#### total signals and positions above 0
+echo "file sum_signal sum_positions" > pAminus.stats
+
+for f in norm_noPap*input*.bedgraph
+    do
+        echo $f
+        total=$(awk '{sum += $4*($3-$2)}END{printf("%8.2f",sum)}' $f)
+        total_pos=$(awk '{if($4 > 0){sum += ($3-$2)}}END{printf("%8.2f",sum)}' $f)
+        echo "${f/.bedgraph/} $total $total_pos" >> pAminus.stats
+    done
+    
+for f in norm_xPap*input*.bedgraph
+    do
+        echo $f
+        total=$(awk '{sum += $4*($3-$2)}END{printf("%8.2f",sum)}' $f)
+        total_pos=$(awk '{if($4 > 0){sum += ($3-$2)}}END{printf("%8.2f",sum)}' $f)
+        echo "${f/.bedgraph/} $total $total_pos" >> pAminus.stats
+    done
+
+for f in norm_*ip*BGsub.bedgraph
+    do
+        echo $f
+        total=$(awk '{sum += $4*($3-$2)}END{printf("%8.2f",sum)}' $f)
+        total_pos=$(awk '{if($4 > 0){sum += ($3-$2)}}END{printf("%8.2f",sum)}' $f)
+        echo "${f/.bedgraph/} $total $total_pos" >> pAminus.stats
+    done
+```
+
+```{r}
+(stats_pAminus <- read.table('/Users/schmidm/Documents/Results/Lexogen_RNAseq_2/STAR_bw/norm_and_pA_filtered_bedgraph/pAminus.stats', header=TRUE) %>% 
+   tbl_df %>%
+  mutate(file = sub('^norm_', '', file) %>% 
+           sub('_plus_KevinRoyAfiltered', '', .) %>%
+           sub('_minus_KevinRoyAfiltered', '', .)) %>%
+  group_by(file) %>%
+  summarize(sum_signal = sum(sum_signal),
+            sum_positions = sum(sum_positions)) %>%
+  separate(file, c('Pap', 'strain', 'fraction', 'rapa', 'rep'), sep='_', extra='drop'))
+```
+
+```{r}
+noPaps <- stats_pAminus %>% filter(Pap == 'noPap') %>% dplyr::select(-sum_positions, -rep) %>% spread(Pap, sum_signal)
+
+Paps <- stats_pAminus %>% filter(Pap != 'noPap')%>% dplyr::select(-sum_positions) %>% spread(Pap, sum_signal)
+
+(stats_pAminus_signal <- left_join(Paps, noPaps))
+```
+
+#### sanity check
+```{r}
+stats_pAminus_signal %>%
+  mutate(pAminus_difference = xPappAminus - (xPap - noPap)) %>%
+  arrange(pAminus_difference) %>%
+  kable
+```
+
+--> only minor differences, probably rounding errors --> ignore
+
+
+#### visualize signal
+```{r}
+(stats_signal <- stats_pAminus_signal %>%
+  gather(Pap, sum_signal, -strain, -fraction, -rapa, -rep))
+```
+
+```{r}
+filter(stats_signal, rapa == 0)
+```
+
+```{r pAplus minus and both signal}
+filter(stats_signal, rapa == 0) %>%
+  ggplot(., aes(x=rep, y=sum_signal, fill=Pap)) +
+  geom_bar(stat='identity', position='dodge') +
+  facet_grid(fraction ~ strain, scales='free') +
+  scale_fill_brewer(palette = 'Set1') +
+  theme_bw()
+```
+
+
+```{r}
+(stats_signal_fractions <- filter(stats_signal, rapa == 0, Pap != 'xPap') %>%
+  group_by(strain,fraction,rapa,rep) %>%
+  mutate(frac_signal = sum_signal/sum(sum_signal),
+         pA = ifelse(Pap == 'noPap', 'pA+', 'pA-')))
+```
+
+```{r piechart pAplus vs minus signal}
+ggplot(stats_signal_fractions, aes(x=factor(1), y=frac_signal, fill=pA)) +
+  geom_bar(stat='identity') +
+  facet_grid(fraction ~ strain + rep, scales='free') +
+  scale_fill_brewer(palette = 'Set1') +
+  coord_polar(theta='y') +
+  theme_bw()
+```
+
+
+
+#### positions covered comparison
+```{r}
+noPaps_pos <- stats_pAminus %>% filter(Pap == 'noPap') %>% dplyr::select(-sum_signal, -rep) %>% spread(Pap, sum_positions)
+
+Paps_pos <- stats_pAminus %>% filter(Pap != 'noPap')%>% dplyr::select(-sum_signal) %>% spread(Pap, sum_positions)
+
+(stats_pAminus_positions <- left_join(Paps_pos, noPaps_pos))
+```
+
+
+
+```{r}
+(stats_positions <- stats_pAminus_positions %>%
+  gather(Pap, sum_positions, -strain, -fraction, -rapa, -rep))
+```
+
+```{r}
+filter(stats_positions, rapa == 0)
+```
+
+```{r pAplus minus and both positions}
+filter(stats_positions, rapa == 0) %>%
+  ggplot(., aes(x=rep, y=sum_positions, fill=Pap)) +
+  geom_bar(stat='identity', position='dodge') +
+  facet_grid(fraction ~ strain, scales='free') +
+  scale_fill_brewer(palette = 'Set1') +
+  theme_bw()
+```
+
+
+```{r}
+(stats_positions_fractions <- filter(stats_positions, rapa == 0, Pap != 'xPap') %>%
+  group_by(strain,fraction,rapa,rep) %>%
+  mutate(frac_positions = sum_positions/sum(sum_positions),
+         pA = ifelse(Pap == 'noPap', 'pA+', 'pA-')))
+```
+
+```{r piechart pAplus vs minus positions}
+ggplot(stats_positions_fractions, aes(x=factor(1), y=frac_positions, fill=pA)) +
+  geom_bar(stat='identity') +
+  facet_grid(fraction ~ strain + rep, scales='free') +
+  scale_fill_brewer(palette = 'Set1') +
+  coord_polar(theta='y') +
+  theme_bw()
+```
+
+####some sanity check:
+```{bash, eval = FALSE}
+###for SNR4
+awk '$1=="chrV" && $2 == 424882' norm_noPap_Mex67AA_ip_0_1_plus_KevinRoyAfiltered_BGsub.bedgraph
+#chrV	424882	424883	-111.6035
+
+
+awk '$1=="chrV" && $2 == 424882' norm_xPap_Mex67AA_ip_0_1_plus_KevinRoyAfiltered_BGsub.bedgraph
+#chrV	424882	424883	802.2
+
+
+awk '$1=="chrV" && $2 == 424882' norm_xPappAminus_Mex67AA_ip_0_1_plus_KevinRoyAfiltered_BGsub.bedgraph
+#chrV	424882	424883	913.8035
+
+# --> ups this oddity since negatives are allowed in both BGsub files !!
+
+
+awk '$1=="chrV" && $2 == 424882' norm_noPap_Mex67AA_input_0_1_plus_KevinRoyAfiltered.bedgraph
+#chrV	424882	424883	249.642
+
+
+awk '$1=="chrV" && $2 == 424882' norm_xPap_Mex67AA_input_0_1_plus_KevinRoyAfiltered.bedgraph
+#chrV	424882	424883	362039
+
+
+awk '$1=="chrV" && $2 == 424882' norm_xPappAminus_Mex67AA_input_0_1_plus_KevinRoyAfiltered.bedgraph
+#chrV	424882	424883	361789.358
+```
+
+--> ups this oddity since negatives are allowed !!
+--> otherwise seems to be OK..
+
+
+
+```{r}
+sessionInfo()
+```
+
+
+

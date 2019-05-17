@@ -1,0 +1,992 @@
+---
+title: "Count body and end signal for the various samples and tracks"
+author: "Manfred Schmid"
+output: pdf_document
+---
+`r format(Sys.time(), "%d %B, %Y")`
+
+
+## Create body and end annotations for Steinmetz transcription units
+
+Define gene body region: TSS to TES-200bp
+Define gene end region: TES+/-200bp
+
+
+Annotations used are the classical Steinmetz transcription unit annotations lifted to UCSC release *sacCer3*.
+
+Body and ends are derived using awk and bedtools
+```{bash, eval=FALSE}
+#!/bin/bash
+
+## for raw data
+
+########################################################################################################################
+####    ANNOTATIONS FOR BODY vs END
+########################################################################################################################
+
+
+# annotations for body and end regions
+bed="/Users/schmidm/Documents/genomewide_datasets/annotations/sacCer3/Steinmetz_sacCer3_latin.bed"
+
+awk '{OFS="\t"}{if($6=="+"){$3-=200;if(($3-$2)>100) print $0}}' $bed | cut -f1-4 > ${bed/.bed/_body_endsm200_plus.bed}
+awk '{OFS="\t"}{if($6=="-"){$2+=200;if(($3-$2)>100) print $0}}' $bed | cut -f1-4 > ${bed/.bed/_body_endsm200_minus.bed}
+
+awk '{OFS="\t"}{if($6=="+"){$2=$3-200;$3+=200; print $0}}' $bed | cut -f1-4 > ${bed/.bed/_ends_pm200_plus.bed}
+awk '{OFS="\t"}{if($6=="-"){$3=$2+200;$2-=200; print $0}}' $bed | cut -f1-4 > ${bed/.bed/_ends_pm200_minus.bed}
+
+
+head -3 $bed
+#chrI    5074    6237    ST3634:SUTs:SUT432:SUT432       0       -
+#chrI    7275    9260    ST3635:ORF-T:YAL067C:SEO1       0       -
+#chrI    9367    9600    ST0001:SUTs:SUT001:SUT001       0       +
+
+
+head -3 ${bed/.bed/_body_endsm200_plus.bed}
+#chrI    30071   30704   ST0002:CUTs:CUT001:CUT001
+#chrI    31151   32784   ST0003:ORF-T:YAL062W:GDH3
+#chrI    33359   34696   ST0004:ORF-T:YAL061W:BDH2
+##note: ST0001 is gone because body is shorter than 100bp!
+
+head -3 ${bed/.bed/_body_endsm200_minus.bed}
+#chrI    5274    6237    ST3634:SUTs:SUT432:SUT432
+#chrI    7475    9260    ST3635:ORF-T:YAL067C:SEO1
+#chrI    10931   11140   ST3636:CUTs:CUT436:CUT436
+
+
+head -3 ${bed/.bed/_ends_pm200_plus.bed}
+#chrI    9400    9800    ST0001:SUTs:SUT001:SUT001
+#chrI    30704   31104   ST0002:CUTs:CUT001:CUT001
+#chrI    32784   33184   ST0003:ORF-T:YAL062W:GDH3
+##note: ST0001 ends are still counted
+
+
+head -3 ${bed/.bed/_ends_pm200_minus.bed}
+#chrI    4874    5274    ST3634:SUTs:SUT432:SUT432
+#chrI    7075    7475    ST3635:ORF-T:YAL067C:SEO1
+#chrI    10531   10931   ST3636:CUTs:CUT436:CUT436
+```
+
+
+
+### remove overlaps from gene body annotations
+
+Original Steinmetz annotations never overlap on the same strand. Here I extend the ends by 200bp so overlaps are likely to occur. Since gene end reads dominate in those libraries, we don't want to count overlapping "gene end" regions as "gene body." Hence we remove all ends+/-200bp covered regions from gene body regions.  
+
+
+First inspect the overlaps:  
+```{bash, eval = FALSE}
+bed="/Users/schmidm/Documents/genomewide_datasets/annotations/sacCer3/Steinmetz_sacCer3_latin.bed"
+
+##inspect the overlaps
+bedtools intersect -wo -a ${bed/.bed/_body_endsm200_plus.bed} -b ${bed/.bed/_ends_pm200_plus.bed} > body_vs_end_intersect_plus.txt
+
+bedtools intersect -wo -a ${bed/.bed/_body_endsm200_minus.bed} -b ${bed/.bed/_ends_pm200_minus.bed} > body_vs_end_intersect_minus.txt
+
+head body_vs_end_intersect_plus.txt
+#chrI    35095   36192   ST0005:ORF-T:YAL060W:BDH1       chrI    34696   35096   ST0004:ORF-T:YAL061W:BDH2       1
+#chrI    36543   37128   ST0006:ORF-T:YAL059W:ECM1       chrI    36192   36592   ST0005:ORF-T:YAL060W:BDH1       49
+#chrI    37407   38832   ST0007:ORF-T:YAL058W:CNE1       chrI    37128   37528   ST0006:ORF-T:YAL059W:ECM1       121
+#chrI    39215   41768   ST0008:ORF-T:YAL056W:GPB2       chrI    38832   39232   ST0007:ORF-T:YAL058W:CNE1       17
+#chrI    42159   42632   ST0009:ORF-T:YAL055W:PEX22      chrI    41768   42168   ST0008:ORF-T:YAL056W:GPB2       9
+#chrI    62789   65406   ST0015:ORF-T:YAL041W:CDC24      chrI    62446   62846   ST0014:ORF-T:YAL042W:ERV46      57
+#chrI    79693   80446   ST0020:ORF-T:YAL034W-A:MTW1     chrI    79334   79734   ST0019:ORF-T:YAL035W:FUN12      41
+#chrI    94605   95342   ST0024:ORF-T:YAL027W:YAL027W    chrI    94286   94686   ST0023:ORF-T:YAL028W:FRT2       81
+#chrI    130699  131884  ST0029:ORF-T:YAL012W:CYS3       chrI    130364  130764  ST0028:ORF-T:YAL013W:DEP1       65
+#chrI    132195  133908  ST0030:ORF-T:YAL011W:SWC3       chrI    131884  132284  ST0029:ORF-T:YAL012W:CYS3       89
+
+wc -l body_vs_end_intersect_plus.txt
+#1011 body_vs_end_intersect_plus.txt
+
+head body_vs_end_intersect_minus.txt
+#chrI    33275   34380   ST3640:SUTs:SUT435:SUT435       chrI    34179   34579   ST3641:CUTs:CUT438:CUT438       201
+#chrI    42939   43548   ST3643:ORF-T:YAL054C:ACS1       chrI    43347   43747   ST3644:ORF-T:YAL054C:ACS1       201
+#chrI    51937   52658   ST3645:ORF-T:YAL049C:YAL049C    chrI    52457   52857   ST3646:ORF-T:YAL048C:GEM1       201
+#chrI    52857   54842   ST3646:ORF-T:YAL048C:GEM1       chrI    54753   55153   ST3647:ORF-T:YAL047C:SPC72      89
+#chrI    55153   56922   ST3647:ORF-T:YAL047C:SPC72      chrI    56721   57121   ST3648:ORF-T:YAL046C:YAL046C    201
+#chrI    58073   58482   ST3649:ORF-T:YAL044C:GCV3       chrI    58409   58809   ST3650:ORF-T:YAL043C:PTA1       73
+#chrI    65665   67850   ST3651:ORF-T:YAL040C:CLN3       chrI    67649   68049   ST3652:CUTs:CUT440:CUT440       201
+#chrI    101681  105986  ST3661:ORF-T:YAL024C:LTE1       chrI    105961  106361  ST3662:ORF-T:YAL023C:PMT2       25
+#chrI    106361  108666  ST3662:ORF-T:YAL023C:PMT2       chrI    108657  109057  ST3663:ORF-T:YAL022C:FUN26      9
+#chrI    109057  110466  ST3663:ORF-T:YAL022C:FUN26      chrI    110417  110817  ST3664:ORF-T:YAL021C:CCR4       49
+
+wc -l body_vs_end_intersect_minus.txt
+#1074 body_vs_end_intersect_minus.txt
+
+wc -l ${bed/.bed/_body_endsm200_plus.bed}
+#    3381 /Users/schmidm/Documents/genomewide_datasets/annotations/sacCer3/Steinmetz_sacCer3_latin_body_endsm200_plus.bed
+wc -l ${bed/.bed/_body_endsm200_minus.bed}
+#    3385 /Users/schmidm/Documents/genomewide_datasets/annotations/sacCer3/Steinmetz_sacCer3_latin_body_endsm200_minus.bed
+```
+
+
+--> roughly 1/3 of all body regions have overlapping end regions!  
+
+
+#### filter out ends_pm200 from body annotations:  
+```{bash, eval = FALSE}
+bed="/Users/schmidm/Documents/genomewide_datasets/annotations/sacCer3/Steinmetz_sacCer3_latin.bed"
+
+bedtools subtract -a ${bed/.bed/_body_endsm200_plus.bed} -b ${bed/.bed/_ends_pm200_plus.bed} > ${bed/.bed/_body_endsm200_cleaned_plus.bed}
+bedtools subtract -a ${bed/.bed/_body_endsm200_minus.bed} -b ${bed/.bed/_ends_pm200_minus.bed} > ${bed/.bed/_body_endsm200_cleaned_minus.bed}
+
+#sanity check
+##plus strand for ST0006 overlaps with extended end of ST0005
+##body:
+grep ST0006 ${bed/.bed/_body_endsm200_plus.bed}
+#chrI    36543   37128   ST0006:ORF-T:YAL059W:ECM1
+
+##ends:
+grep ST0005 ${bed/.bed/_ends_pm200_plus.bed}
+#chrI    36192   36592   ST0005:ORF-T:YAL060W:BDH1
+
+##cleaned_body:
+grep ST0006 ${bed/.bed/_body_endsm200_cleaned_plus.bed}
+#chrI    36592   37128   ST0006:ORF-T:YAL059W:ECM1
+
+
+
+
+##minus strand for ST3640
+grep ST3640 ${bed/.bed/_body_endsm200_minus.bed}
+#chrI    33275   34380   ST3640:SUTs:SUT435:SUT435
+
+
+##ends:
+grep ST3641 ${bed/.bed/_ends_pm200_minus.bed}
+#chrI    34179   34579   ST3641:CUTs:CUT438:CUT438
+
+##cleaned_body:
+grep ST3640 ${bed/.bed/_body_endsm200_cleaned_minus.bed}
+#chrI    33275   34179   ST3640:SUTs:SUT435:SUT435
+```
+
+
+#### inspection of the cleaned gene body annotation
+
+```{bash, eval = FALSE}
+bed="/Users/schmidm/Documents/genomewide_datasets/annotations/sacCer3/Steinmetz_sacCer3_latin.bed"
+
+### total nr of regions
+wc -l ${bed/.bed/_body_endsm200_cleaned_plus.bed}
+#    3359 /Users/schmidm/Documents/Results/Lexogen_RNAseq/anno/Steinmetz_annotations_sacCer3_latin_body_endsm200_cleaned_plus.bed
+wc -l ${bed/.bed/_body_endsm200_cleaned_minus.bed}
+#    3366 /Users/schmidm/Documents/Results/Lexogen_RNAseq/anno/Steinmetz_annotations_sacCer3_latin_body_endsm200_cleaned_minus.bed
+##lost some 40 body annotations completely
+
+
+### total bp in the different parts
+cat ${bed/.bed/_body_endsm200_plus.bed} | awk '{sum+=($3-$2)}END{print sum}'
+#4745432
+cat ${bed/.bed/_body_endsm200_cleaned_plus.bed} | awk '{sum+=($3-$2)}END{print sum}'
+#4632362
+cat ${bed/.bed/_body_endsm200_minus.bed} | awk '{sum+=($3-$2)}END{print sum}'
+#4720823
+cat ${bed/.bed/_body_endsm200_cleaned_minus.bed} | awk '{sum+=($3-$2)}END{print sum}'
+#4594953
+
+#--> lost some 200000 bp of body annotations by this overlap cleaning.  
+
+
+#### how many body regions are "split apart" ?
+
+##how many body regions are "split apart" ?
+cat ${bed/.bed/_body_endsm200_cleaned_plus.bed} | cut -f 4 | uniq -c | grep -v "  1"
+##no output, ie 0
+cat ${bed/.bed/_body_endsm200_cleaned_minus.bed} | cut -f 4 | uniq -c | grep -v "  1"
+##no output ie 0
+
+# --> none!  
+# This may at least have happened some times, but explanation is the Steinmetz annotations are NEVER overlapping on the same strand... if an end region is overlapping due to 200bp extension, its only overlapping at one edge and never internally.
+```
+
+
+### remove overlaps from gene end annotations
+
+Even though Steinmetz annotations never overlap, the extended gene ends can overlap with each other.
+
+#### trim overlapping extended ends
+```{bash, eval = FALSE}
+ends_plus_bed="/Users/schmidm/Documents/genomewide_datasets/annotations/sacCer3/Steinmetz_sacCer3_latin_ends_pm200_plus.bed"
+ends_minus_bed="/Users/schmidm/Documents/genomewide_datasets/annotations/sacCer3/Steinmetz_sacCer3_latin_ends_pm200_minus.bed"
+
+bedtools intersect -wo -a $ends_plus_bed -b $ends_plus_bed | awk '$4 != $8' | head -4
+#chrI	143237	143637	ST0034:ORF-T:YAL003W,:snR18	chrI	143397	143797	ST0035:CUTs:CUT003:CUT003	240
+#chrI	143397	143797	ST0035:CUTs:CUT003:CUT003	chrI	143237	143637	ST0034:ORF-T:YAL003W,:snR18	240
+#chrII	254674	255074	ST0107:SUTs:SUT011:SUT011	chrII	254858	255258	ST0108:CUTs:CUT009:CUT009	216
+#chrII	254858	255258	ST0108:CUTs:CUT009:CUT009	chrII	254674	255074	ST0107:SUTs:SUT011:SUT011	216
+
+bedtools intersect -wo -a $ends_plus_bed -b $ends_plus_bed | awk '$4 != $8' | wc -l
+# 258
+
+bedtools intersect -wo -a $ends_minus_bed -b $ends_minus_bed | awk '$4 != $8' | wc -l
+# 246
+
+# 502 overlaps for the 7272 total annotations
+
+
+### strip overlaps using a compromize shifting the border exatly in the middle between the 2 ends
+awk '
+{
+  if($1==last_chr && last_end>$2){
+    overlap=(last_end-$2);
+    last_end-=(overlap/2);
+    $2=last_end;
+  };
+  if(last_chr != ""){
+    printf "%s\t%i\t%i\t%s\n",last_chr,last_start,last_end,last_anno; 
+  };
+  last_chr=$1; last_start=$2; last_end=$3; last_anno=$4
+}END{
+  printf "%s\t%i\t%i\t%s\n",last_chr,last_start,last_end,last_anno;
+}' $ends_plus_bed > ${ends_plus_bed/_plus.bed/_cleaned_plus.bed}
+
+awk '
+{
+  if($1==last_chr && last_end>$2){
+    overlap=(last_end-$2);
+    last_end-=(overlap/2);
+    $2=last_end;
+  };
+  if(last_chr != ""){
+    printf "%s\t%i\t%i\t%s\n",last_chr,last_start,last_end,last_anno; 
+  };
+  last_chr=$1; last_start=$2; last_end=$3; last_anno=$4
+}END{
+  printf "%s\t%i\t%i\t%s\n",last_chr,last_start,last_end,last_anno;
+}' $ends_minus_bed > ${ends_minus_bed/_minus.bed/_cleaned_minus.bed}
+
+
+### sanity check that no overlaps are left
+bedtools intersect -wo -a ${ends_plus_bed/_plus.bed/_cleaned_plus.bed} -b ${ends_plus_bed/_plus.bed/_cleaned_plus.bed} | awk '$4 != $8' | wc -l
+# 0
+
+bedtools intersect -wo -a ${ends_minus_bed/_minus.bed/_cleaned_minus.bed} -b ${ends_minus_bed/_minus.bed/_cleaned_minus.bed} | awk '$4 != $8' | wc -l
+# 0
+
+
+##how many total bases removed ??
+awk '{sum += ($3-$2)}END{print sum}' $ends_plus_bed
+#1453200
+
+awk '{sum += ($3-$2)}END{print sum}' $ends_minus_bed
+#1455600
+
+awk '{sum += ($3-$2)}END{print sum}' ${ends_plus_bed/_plus.bed/_cleaned_plus.bed}
+#1431480
+
+awk '{sum += ($3-$2)}END{print sum}' ${ends_minus_bed/_minus.bed/_cleaned_minus.bed}
+#1435112
+
+## --> very little of the total ~ 3 Mb; ie ~ 40kb ie ~1.5%
+```
+
+
+final sorting:  
+```{bash, eval = FALSE}
+bed="/Users/schmidm/Documents/genomewide_datasets/annotations/sacCer3/Steinmetz_sacCer3_latin.bed"
+
+body_plus_bed=${bed/.bed/_body_endsm200_cleaned_plus.bed}
+body_minus_bed=${bed/.bed/_body_endsm200_cleaned_minus.bed}
+ends_plus_bed=${ends_plus_bed/_plus.bed/_cleaned_plus.bed}
+ends_minus_bed=${ends_minus_bed/_minus.bed/_cleaned_minus.bed}
+
+#final sort for later use
+sort -k1,1 -k2,2n ${body_plus_bed} -o ${body_plus_bed}
+sort -k1,1 -k2,2n ${body_minus_bed} -o ${body_minus_bed}
+sort -k1,1 -k2,2n ${ends_plus_bed} -o ${ends_plus_bed}
+sort -k1,1 -k2,2n ${ends_minus_bed} -o ${ends_minus_bed}
+```
+
+
+### number of genomic pA masked sites in each body and end region
+
+Using this little script *bed_count_positions.sh*:  
+```{bash, eval = FALSE}
+#!/usr/bin/env bash
+
+# counts the total number of bases that are covered in file $2 for each interval in file $1
+# and uses bedtools intersect and a awk script to sum up adding the sum at the end
+# note expects a 4-column bed file for file $1
+# output goes to file $3
+#ie line from file $2:
+#   chrI 10 12
+# and for an interval in $1
+#   chrI 5 20 id . +
+# will give chrI 5 20 id 2
+
+bedtools intersect -wao -a $1 -b $2 | \
+awk '{
+  if($4==id){
+    sum+=$8
+  }else{
+    print chr"\t"start"\t"end"\t"id"\t"sum;
+    chr=$1; start=$2; end=$3; id=$4; sum=$8
+  }
+}END{
+  print chr"\t"start"\t"end"\t"id"\t"sum
+}' | sed 1d > $3
+```
+
+```{bash, eval = FALSE}
+bed="/Users/schmidm/Documents/genomewide_datasets/annotations/sacCer3/Steinmetz_sacCer3_latin.bed"
+
+body_plus_bed=${bed/.bed/_body_endsm200_cleaned_plus.bed}
+body_minus_bed=${bed/.bed/_body_endsm200_cleaned_minus.bed}
+ends_plus_bed=${bed/.bed/_ends_pm200_cleaned_plus.bed}
+ends_minus_bed=${bed/.bed/_ends_pm200_cleaned_minus.bed}
+
+## count of genomic A-masked sites per annotation
+pA_sites_plus="/Users/schmidm/Documents/Results/Lexogen_RNAseq/bams/sacCer3_flagged_KevinRoy_plus.bed"
+pA_sites_minus="/Users/schmidm/Documents/Results/Lexogen_RNAseq/bams/sacCer3_flagged_KevinRoy_minus.bed"
+grep ^chr ${pA_sites_plus} | sort -k1,1 -k2,2n > ${pA_sites_plus/.bed/_Sc.bed}
+grep ^chr ${pA_sites_minus} | sort -k1,1 -k2,2n > ${pA_sites_minus/.bed/_Sc.bed}
+
+
+## count of genomic A-masked sites for cleaned gene body regions
+bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count_positions.sh \
+${body_plus_bed} ${pA_sites_plus/.bed/_Sc.bed} ${body_plus_bed/_cleaned_plus.bed/_cleaned_plus_pAfilter.counts}
+
+bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count_positions.sh \
+${body_minus_bed} ${pA_sites_minus/.bed/_Sc.bed} ${body_minus_bed/_cleaned_minus.bed/_cleaned_minus_pAfilter.counts}
+
+cat ${body_plus_bed/_cleaned_plus.bed/_cleaned_plus_pAfilter.counts} \
+${body_minus_bed/_cleaned_minus.bed/_cleaned_minus_pAfilter.counts} > \
+/Users/schmidm/Documents/Results/Lexogen_RNAseq/anno/clean_body_pAfilter.counts
+
+
+
+## count of genomic A-masked sites for effective gene end regions
+bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count_positions.sh \
+${ends_plus_bed} ${pA_sites_plus/.bed/_Sc.bed} ${ends_plus_bed/_plus.bed/_plus_pAfilter.counts}
+
+bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count_positions.sh \
+${ends_minus_bed} ${pA_sites_minus/.bed/_Sc.bed} ${ends_minus_bed/_minus.bed/_minus_pAfilter.counts}
+
+cat ${ends_plus_bed/_plus.bed/_plus_pAfilter.counts} \
+${ends_minus_bed/_minus.bed/_minus_pAfilter.counts} > \
+/Users/schmidm/Documents/Results/Lexogen_RNAseq/anno/clean_ends_pAfilter.counts
+```
+
+
+
+## Create body and end annotations for Wery et al XUTs
+
+#### Prepare XUT annotations from Wery et al., MolCell 2016
+```{bash, eval = FALSE}
+##################################################################
+#### from Wery et al. MolCell 2016 publication
+##################################################################
+
+## file GSE69384_Densities_MW2.txt directly downloaded from GEO looks like that:
+head GSE69384_Densities_MW2.txt | cut -f 1-10
+#Chr     Type    Start   Stop    Strand  ID      WT_S288C_1.densities    WT_S288C_2.densities    xrn1_S288C_1.densities  xrn1_S288C_2.densities
+#chr01   gene    1807    2169    -       YAL068C 0       0       0.00318707312792003     0.00366471906077318
+#chr01   gene    2480    2707    +       YAL067W-A       0       0       0       0
+#chr01   XUT     3555    4181    -       XUT0929 0.00716436469757472     0.00862246052128844     0.0659640267133975      0.0562245055902833
+#chr01   XUT     4200    4614    -       XUT0930 0.00541211646431247     0.00625304992406499     0.0634208353220376      0.060103600258765
+#chr01   XUT     5024    6332    -       XUT0931 0.00823600916494304     0.012555461841419       0.0771124395257458      0.0721549307511896
+#chr01   SUT     5075    6237    -       SUT432  0.00888368902009674     0.0139456992610005      0.0855494831534029      0.0803551888125638
+#chr01   gene    7235    9016    -       YAL067C 0.00529366947098577     0.00485412592309572     0.03229862535656        0.0246350559085308
+#chr01   SUT     9368    9600    +       SUT001  0.0154233705249076      0.0343403367610937      0.233367616461132       0.204111482538278
+#chr01   XUT     9384    9872    +       XUT0001 0.0110234519395812      0.0203426590065441      0.151415302470017       0.136701889995498
+
+awk '$2 == "XUT"' GSE69384_Densities_MW2.txt | head | cut -f 1-10
+#chr01   XUT     3555    4181    -       XUT0929 0.00716436469757472     0.00862246052128844     0.0659640267133975      0.0562245055902833
+#chr01   XUT     4200    4614    -       XUT0930 0.00541211646431247     0.00625304992406499     0.0634208353220376      0.060103600258765
+#chr01   XUT     5024    6332    -       XUT0931 0.00823600916494304     0.012555461841419       0.0771124395257458      0.0721549307511896
+#chr01   XUT     9384    9872    +       XUT0001 0.0110234519395812      0.0203426590065441      0.151415302470017       0.136701889995498
+#chr01   XUT     22797   23181   -       XUT0932 0.0163347515104704      0.0146039845629137      0.083387491911222       0.0742890906748164
+#chr01   XUT     24071   25647   +       XUT0002 0.0336120917257301      0.0412756146303412      0.222834918786222       0.20793736791278
+#chr01   XUT     27107   29200   +       XUT0003 0.0240262820688867      0.0230296285109278      0.147652121068527       0.130710500798344
+#chr01   XUT     30048   30816   +       XUT0004 0.0227815617620019      0.0208096188955392      0.152323652763707       0.159150790316751
+#chr01   XUT     31434   34359   -       XUT0933 0.0818272796530141      0.0803366964569189      0.686197212953655       0.596267701468921
+#chr01   XUT     34785   35094   -       XUT0934 0.010143353760534       0.0139516974112203      0.0625103270517283      0.0836797221667192
+
+
+awk '$2 == "XUT"' GSE69384_Densities_MW2.txt | wc -l
+#1798
+
+cut -f 1-6 GSE69384_Densities_MW2.txt | sed 1d | awk '{print $1"\t"$3-1"\t"$4"\t"$2":"$6"\t0\t"$5}' > tmp
+python ~/ms_tools/convert_chr_names.py tmp -f roman0 -t latin > GSE69384_anno.bed
+
+awk '$4 ~ /^XUT/' GSE69384_anno.bed > GSE69384_XUTs.bed
+
+wc -l GSE69384_XUTs.bed
+#1798 GSE69384_XUTs.bed
+
+
+
+#### compare Wery SUTs to my own SUT annotations based on Steinmetz SUTs
+awk '$4 ~ /^SUT/' GSE69384_anno.bed > GSE69384_SUTs.bed
+
+wc -l GSE69384_SUTs.bed
+#     847 GSE69384_SUTs.bed
+
+grep SUT ~/Documents/genomewide_datasets/annotations/sacCer3/Steinmetz_sacCer3_latin.bed > ~/Documents/genomewide_datasets/annotations/sacCer3/Steinmetz_sacCer3_latin_SUTs.bed
+#     849 /Users/schmidm/Documents/genomewide_datasets/annotations/sacCer3/Steinmetz_sacCer3_latin_SUTs.bed
+
+
+## intersection comparison
+bedtools intersect -wo -s -a GSE69384_SUTs.bed -b ~/Documents/genomewide_datasets/annotations/sacCer3/Steinmetz_sacCer3_latin_SUTs.bed | head
+#chrI    5074    6237    SUT:SUT432      0       -       chrI    5074    6237    ST3634:SUTs:SUT432:SUT432       0       -       1163
+#chrI    9367    9600    SUT:SUT001      0       +       chrI    9367    9600    ST0001:SUTs:SUT001:SUT001       0       +       233
+#chrI    28082   29772   SUT:SUT433      0       -       chrI    28082   29772   ST3637:SUTs:SUT433:SUT433       0       -       1690
+#chrI    31483   32748   SUT:SUT434      0       -       chrI    31483   32748   ST3639:SUTs:SUT434:SUT434       0       -       1265
+#chrI    33075   34380   SUT:SUT435      0       -       chrI    33075   34380   ST3640:SUTs:SUT435:SUT435       0       -       1305
+#chrI    43439   45328   SUT:SUT002      0       +       chrI    43439   45328   ST0010:SUTs:SUT002:SUT002       0       +       1889
+#chrI    68717   69486   SUT:SUT003      0       +       chrI    68717   69486   ST0016:SUTs:SUT003:SUT003       0       +       769
+#chrI    191616  192201  SUT:SUT436      0       -       chrI    191616  192201  ST3678:SUTs:SUT436:SUT436       0       -       585
+#chrI    198780  199902  SUT:SUT004      0       +       chrI    198780  199902  ST0047:SUTs:SUT004:SUT004       0       +       1122
+#chrII   45287   45464   SUT:SUT437      0       -       chrII   45287   45464   ST3688:SUTs:SUT437:SUT437       0       -       177
+# -> highly similar
+
+## SUTs only present in one of the datasets
+bedtools intersect -v -s -a GSE69384_SUTs.bed -b ~/Documents/genomewide_datasets/annotations/sacCer3/Steinmetz_sacCer3_latin_SUTs.bed
+## -> no putput
+bedtools intersect -v -s -a ~/Documents/genomewide_datasets/annotations/sacCer3/Steinmetz_sacCer3_latin_SUTs.bed -b GSE69384_SUTs.bed
+# chrVII  198012  199109  ST1096:ORF-T:YGL162W:SUT1       0       +
+# chrXVI  576461  577430  ST3508:ORF-T:YPR009W:SUT2       0       +
+## why are they not in the Wery set ... don't know but its only those 2 ....
+
+
+## offset between Wery and Steinmetz (in principle both should be sacCer3!)
+bedtools intersect -wo -s -a GSE69384_SUTs.bed \
+-b ~/Documents/genomewide_datasets/annotations/sacCer3/Steinmetz_sacCer3_latin_SUTs.bed | \
+awk '{if( ($3-$2) != $13 )print $0}'
+## --> 1bp off at some chromosomes, otherwise appear identical
+
+
+#### XUTs vs SUTs
+bedtools intersect -wo -s -a GSE69384_SUTs.bed -b GSE69384_XUTs.bed | head
+#chrI    5074    6237    SUT:SUT432      0       -       chrI    5023    6332    XUT:XUT0931     0       -       1163
+#chrI    9367    9600    SUT:SUT001      0       +       chrI    9383    9872    XUT:XUT0001     0       +       217
+#chrI    31483   32748   SUT:SUT434      0       -       chrI    31433   34359   XUT:XUT0933     0       -       1265
+#chrI    33075   34380   SUT:SUT435      0       -       chrI    31433   34359   XUT:XUT0933     0       -       1284
+#chrI    43439   45328   SUT:SUT002      0       +       chrI    43194   45575   XUT:XUT0005     0       +       1889
+#chrI    68717   69486   SUT:SUT003      0       +       chrI    68697   69767   XUT:XUT0007     0       +       769
+#chrI    198780  199902  SUT:SUT004      0       +       chrI    198619  199910  XUT:XUT0014     0       +       1122
+#chrII   46787   47132   SUT:SUT005      0       +       chrII   46578   47370   XUT:XUT0020     0       +       345
+#chrII   126207  127560  SUT:SUT438      0       -       chrII   126092  127562  XUT:XUT0953     0       -       1353
+#chrII   164467  165004  SUT:SUT006      0       +       chrII   164458  164999  XUT:XUT0027     0       +       532
+
+#### XUTs not overlapping SUTs
+bedtools intersect -v -s -a GSE69384_XUTs.bed -b GSE69384_SUTs.bed > GSE69384_XUTs_minus_SUTs.bed
+wc -l GSE69384_XUTs_minus_SUTs.bed
+#     1258 GSE69384_XUTs_minus_SUTs.bed
+
+
+#### SUTs not overlapping XUTs
+bedtools intersect -v -s -a GSE69384_SUTs.bed -b GSE69384_XUTs.bed > GSE69384_SUTs_minus_XUTs.bed
+wc -l GSE69384_SUTs_minus_XUTs.bed
+#     312 GSE69384_SUTs_minus_XUTs.bed
+```
+
+
+#### XUT body and end regions
+```{bash, eval = FALSE}
+#### XUTs
+XUTs="/Users/schmidm/Documents/genomewide_datasets/Expression/Morillon_XUTs/GSE69384_XUTs.bed"
+
+awk '{OFS="\t"}{if($6=="+"){$3-=200;if(($3-$2)>100) print $0}}' $XUTs | grep ^chr | cut -f1-4 > ${XUTs/.bed/_body_endsm200_plus.bed}
+awk '{OFS="\t"}{if($6=="-"){$2+=200;if(($3-$2)>100) print $0}}' $XUTs | grep ^chr | cut -f1-4 > ${XUTs/.bed/_body_endsm200_minus.bed}
+
+awk '{OFS="\t"}{if($6=="+"){$2=$3-200;$3+=200; print $0}}' $XUTs | grep ^chr | cut -f1-4 > ${XUTs/.bed/_ends_pm200_plus.bed}
+awk '{OFS="\t"}{if($6=="-"){$3=$2+200;$2-=200; print $0}}' $XUTs | grep ^chr | cut -f1-4 > ${XUTs/.bed/_ends_pm200_minus.bed}
+
+
+##subtract from XUT bodies regions overlapping XUT or Steinmetz annotation ends
+bedtools subtract -a ${XUTs/.bed/_body_endsm200_plus.bed} -b ${XUTs/.bed/_ends_pm200_plus.bed} > ${XUTs/.bed/_body_endsm200_cleaned_plus.bed}
+
+bedtools subtract -a ${XUTs/.bed/_body_endsm200_minus.bed} -b ${XUTs/.bed/_ends_pm200_minus.bed} > ${XUTs/.bed/_body_endsm200_cleaned_minus.bed}
+
+wc -l ${XUTs/.bed/_body_endsm200_cleaned_plus.bed}
+#     739 /Users/schmidm/Documents/genomewide_datasets/Expression/Morillon_XUTs/GSE69384_XUTs_body_endsm200_cleaned_plus.bed
+wc -l ${XUTs/.bed/_body_endsm200_plus.bed}
+#     742 /Users/schmidm/Documents/genomewide_datasets/Expression/Morillon_XUTs/GSE69384_XUTs_body_endsm200_plus.bed
+wc -l ${XUTs/.bed/_body_endsm200_minus.bed}
+#     703 /Users/schmidm/Documents/genomewide_datasets/Expression/Morillon_XUTs/GSE69384_XUTs_body_endsm200_minus.bed
+wc -l ${XUTs/.bed/_body_endsm200_cleaned_minus.bed}
+#     699 /Users/schmidm/Documents/genomewide_datasets/Expression/Morillon_XUTs/GSE69384_XUTs_body_endsm200_cleaned_minus.bed
+
+### remove XUT bodies that overlap Steinmetz gene ends
+Steinmetz_ends_plus="/Users/schmidm/Documents/genomewide_datasets/annotations/sacCer3/Steinmetz_sacCer3_latin_ends_pm200_cleaned_plus.bed"
+Steinmetz_ends_minus="/Users/schmidm/Documents/genomewide_datasets/annotations/sacCer3/Steinmetz_sacCer3_latin_ends_pm200_cleaned_minus.bed"
+
+bedtools subtract -A -a ${XUTs/.bed/_body_endsm200_cleaned_plus.bed} -b ${Steinmetz_ends_plus} > ${XUTs/.bed/_body_endsm200_cleaned2x_plus.bed}
+
+bedtools subtract -A -a ${XUTs/.bed/_body_endsm200_cleaned_minus.bed} -b ${Steinmetz_ends_minus} > ${XUTs/.bed/_body_endsm200_cleaned2x_minus.bed}
+
+wc -l ${XUTs/.bed/_body_endsm200_cleaned2x_plus.bed}
+#     490 /Users/schmidm/Documents/genomewide_datasets/Expression/Morillon_XUTs/GSE69384_XUTs_body_endsm200_cleaned2x_plus.bed
+
+wc -l ${XUTs/.bed/_body_endsm200_cleaned2x_minus.bed}
+#     463 /Users/schmidm/Documents/genomewide_datasets/Expression/Morillon_XUTs/GSE69384_XUTs_body_endsm200_cleaned2x_minus.bed
+
+
+
+## remove XUTs end regions overlapping any Steinmetz ends
+XUTs_ends_plus=${XUTs/.bed/_ends_pm200_plus.bed}
+XUTs_ends_minus=${XUTs/.bed/_ends_pm200_minus.bed}
+
+
+bedtools subtract -A -a $XUTs_ends_plus -b $Steinmetz_ends_plus > ${XUTs_ends_plus/_plus.bed/_cleaned_plus.bed}
+wc -l ${XUTs_ends_plus/_plus.bed/_cleaned_plus.bed}
+#     604 /Users/schmidm/Documents/genomewide_datasets/Expression/Morillon_XUTs/GSE69384_XUTs_ends_pm200_cleaned_plus.bed
+
+bedtools subtract -A -a $XUTs_ends_minus -b $Steinmetz_ends_minus > ${XUTs_ends_minus/_minus.bed/_cleaned_minus.bed}
+wc -l ${XUTs_ends_minus/_minus.bed/_cleaned_minus.bed}
+#     561 /Users/schmidm/Documents/genomewide_datasets/Expression/Morillon_XUTs/GSE69384_XUTs_ends_pm200_cleaned_minus.bed
+
+```
+
+
+#### number of genomic pA masked sites for XUTs
+
+```{bash, eval = FALSE}
+#### Genomic A-masked positions inside XUT annotations
+
+## count of genomic A-masked sites per annotation
+pA_sites_plus="/Users/schmidm/Documents/Results/Lexogen_RNAseq/bams/sacCer3_flagged_KevinRoy_plus_Sc.bed"
+pA_sites_minus="/Users/schmidm/Documents/Results/Lexogen_RNAseq/bams/sacCer3_flagged_KevinRoy_minus_Sc.bed"
+
+body_plus_bed="/Users/schmidm/Documents/genomewide_datasets/Expression/Morillon_XUTs/GSE69384_XUTs_body_endsm200_cleaned2x_plus.bed"
+body_minus_bed="/Users/schmidm/Documents/genomewide_datasets/Expression/Morillon_XUTs/GSE69384_XUTs_body_endsm200_cleaned2x_minus.bed"
+ends_plus_bed="/Users/schmidm/Documents/genomewide_datasets/Expression/Morillon_XUTs/GSE69384_XUTs_ends_pm200_cleaned_plus.bed"
+ends_minus_bed="/Users/schmidm/Documents/genomewide_datasets/Expression/Morillon_XUTs/GSE69384_XUTs_ends_pm200_cleaned_minus.bed"
+
+
+## count of genomic A-masked sites for cleaned gene body regions
+bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count_positions.sh \
+${body_plus_bed} ${pA_sites_plus} ${body_plus_bed/_cleaned2x_plus.bed/_cleaned_plus_pAfilter.counts}
+
+bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count_positions.sh \
+${body_minus_bed} ${pA_sites_minus} ${body_minus_bed/_cleaned2x_minus.bed/_cleaned_minus_pAfilter.counts}
+
+cat ${body_plus_bed/_cleaned2x_plus.bed/_cleaned_plus_pAfilter.counts} \
+${body_minus_bed/_cleaned2x_minus.bed/_cleaned_minus_pAfilter.counts} > \
+/Users/schmidm/Documents/Results/Lexogen_RNAseq/anno/XUTs_cleaned2x_body_pAfilter.counts
+
+
+
+## count of genomic A-masked sites for effective gene end regions
+bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count_positions.sh \
+${ends_plus_bed} ${pA_sites_plus} ${ends_plus_bed/_plus.bed/_plus_pAfilter.counts}
+
+bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count_positions.sh \
+${ends_minus_bed} ${pA_sites_minus} ${ends_minus_bed/_minus.bed/_minus_pAfilter.counts}
+
+cat ${ends_plus_bed/_plus.bed/_plus_pAfilter.counts} \
+${ends_minus_bed/_minus.bed/_minus_pAfilter.counts} > \
+/Users/schmidm/Documents/Results/Lexogen_RNAseq/anno/XUTs_cleaned_ends_pAfilter.counts
+```
+
+
+
+
+# counting
+
+done using a simple bash script bed_count.sh that uses awk + bedtools
+```{bash bed_count.sh, eval=FALSE}
+#!/usr/bin/env bash
+
+#expands a bedgraph file to single nucleotide intervals of file $2
+# and uses bedtools map to count up features over file $1
+# using sum over column $3
+# output goes to file $4
+#ie line from file $2:
+#   chrI 10 12 20 2 +
+#will be converted to:
+#   chrI 10 11 20 2 +
+#   chrI 11 12 20 2 +
+# and counts from this file over interval in $1
+#   chrI 5 20 . . +
+# will give chrI 5 20 . . + 4
+
+awk '{OFS="\t"}
+{ start=$2;
+  end=$3;
+  for(i=start;i<end;i++){
+    $2=i;
+    $3=i+1;
+    print $0
+  }
+}' $2 | \
+sort -k1,1 -k2,2n | \
+bedtools map -a $1 -b - -c $3 -o sum > $4
+```
+
+
+
+## counting 10min data
+
+For the 10min data everything is only regular pA+ data -> only count gene ends.
+
+--> for DESeq2, cound non-normalized reads
+
+```{bash, eval = FALSE}
+#### NON-NORMALIZED FILES x ORF, CUTs, SUTs and snRNAs ("Steinmetz (Xu et al.) annotations")
+
+ends_plus_bed="/Users/schmidm/Documents/genomewide_datasets/annotations/sacCer3/Steinmetz_sacCer3_latin_ends_pm200_cleaned_plus.bed"
+ends_minus_bed="/Users/schmidm/Documents/genomewide_datasets/annotations/sacCer3/Steinmetz_sacCer3_latin_ends_pm200_cleaned_minus.bed"
+
+mkdir bedtools_counts
+
+
+# A-filtered count files
+cd /Users/schmidm/Documents/Results/Lexogen_RNAseq/STAR_bw/KevinRoyAfiltered_bedgraph
+
+for f in *plus_KevinRoyAfiltered.bedgraph
+  do
+     echo $f
+     echo " end reads counting"
+     bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count.sh $ends_plus_bed $f 4 plus_gene_endpm200.counts
+
+     fminus="${f/_plus/_minus}"
+     echo "  ${fminus}"
+     bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count.sh $ends_minus_bed $fminus 4 minus_gene_endpm200.counts
+
+     echo "  merging ends"
+     cat plus_gene_endpm200.counts minus_gene_endpm200.counts > \
+     bedtools_counts/${f/_plus_KevinRoyAfiltered.bedgraph/_endpm200_count_sum_per_anno.txt}
+
+     echo " done"
+  done
+
+rm plus_gene_endpm200.counts
+rm minus_gene_endpm200.counts
+
+
+#### NON-NORMALIZED FILES x XUTs ("Morillon (Wery et al) annotations")
+
+ends_plus_bed="/Users/schmidm/Documents/genomewide_datasets/Expression/Morillon_XUTs/GSE69384_XUTs_ends_pm200_cleaned_plus.bed"
+ends_minus_bed="/Users/schmidm/Documents/genomewide_datasets/Expression/Morillon_XUTs/GSE69384_XUTs_ends_pm200_cleaned_minus.bed"
+
+# A-filtered count files
+cd /Users/schmidm/Documents/Results/Lexogen_RNAseq/STAR_bw/KevinRoyAfiltered_bedgraph
+
+for f in *plus_KevinRoyAfiltered.bedgraph
+  do
+     echo $f
+     echo " end reads counting"
+     bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count.sh $ends_plus_bed $f 4 plus_gene_endpm200.counts
+
+     fminus="${f/_plus/_minus}"
+     echo "  ${fminus}"
+     bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count.sh $ends_minus_bed $fminus 4 minus_gene_endpm200.counts
+
+     echo "  merging ends"
+     cat plus_gene_endpm200.counts minus_gene_endpm200.counts > \
+     bedtools_counts/${f/_plus_KevinRoyAfiltered.bedgraph/_XUTs_endpm200_count_sum_per_anno.txt}
+
+     echo " done"
+  done
+
+rm plus_gene_endpm200.counts
+rm minus_gene_endpm200.counts
+```
+
+
+
+## counting 2min data
+
+#### counting non-normalized data
+for count-based analysis count raw reads
+
+```{bash, eval=FALSE}
+## NORMALIZED to S.pombe track files
+cd /Users/schmidm/Documents/Results/Lexogen_RNAseq_2/STAR_bw/KevinRoyAfiltered_bedgraph
+
+#### annotation files
+body_plus_bed="/Users/schmidm/Documents/genomewide_datasets/annotations/sacCer3/Steinmetz_sacCer3_latin_body_endsm200_cleaned_plus.bed"
+body_minus_bed="/Users/schmidm/Documents/genomewide_datasets/annotations/sacCer3/Steinmetz_sacCer3_latin_body_endsm200_cleaned_minus.bed"
+ends_plus_bed="/Users/schmidm/Documents/genomewide_datasets/annotations/sacCer3/Steinmetz_sacCer3_latin_ends_pm200_cleaned_plus.bed"
+ends_minus_bed="/Users/schmidm/Documents/genomewide_datasets/annotations/sacCer3/Steinmetz_sacCer3_latin_ends_pm200_cleaned_minus.bed"
+
+#### counts for all raw read FILES
+for f in *_plus_KevinRoyAfiltered.bedgraph
+  do
+     echo "end reads counting"
+     echo $f
+     bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count.sh $ends_plus_bed $f 4 plus_gene_endpm200.counts
+
+     fminus="${f/_plus/_minus}"
+     echo $fminus
+     bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count.sh $ends_minus_bed $fminus 4 minus_gene_endpm200.counts
+
+     echo "merging ends"
+     cat plus_gene_endpm200.counts minus_gene_endpm200.counts > \
+     bedtools_counts/${f/_plus_KevinRoyAfiltered.bedgraph/_endpm200_count_sum_per_anno.txt}
+
+     echo "body reads counting"
+     bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count.sh $body_plus_bed $f 4 plus_gene_body.counts
+
+     echo $fminus
+     bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count.sh $body_minus_bed $fminus 4 minus_gene_body.counts
+
+     echo "merging body"
+     cat plus_gene_body.counts minus_gene_body.counts > \
+     bedtools_counts/${f/_plus_KevinRoyAfiltered.bedgraph/_body_endsm200_cleaned_count_sum_per_anno.txt}
+     echo "done"
+  done
+
+rm plus_gene_endpm200.counts
+rm minus_gene_endpm200.counts
+rm plus_gene_body.counts
+rm minus_gene_body.counts
+```
+
+
+
+#### body and end counting non-normalized XUTs
+
+```{bash, eval = FALSE}
+#### NORMALIZED to S.pombe input FILES
+
+body_plus_bed="/Users/schmidm/Documents/genomewide_datasets/Expression/Morillon_XUTs/GSE69384_XUTs_body_endsm200_cleaned2x_plus.bed"
+body_minus_bed="/Users/schmidm/Documents/genomewide_datasets/Expression/Morillon_XUTs/GSE69384_XUTs_body_endsm200_cleaned2x_minus.bed"
+ends_plus_bed="/Users/schmidm/Documents/genomewide_datasets/Expression/Morillon_XUTs/GSE69384_XUTs_ends_pm200_cleaned_plus.bed"
+ends_minus_bed="/Users/schmidm/Documents/genomewide_datasets/Expression/Morillon_XUTs/GSE69384_XUTs_ends_pm200_cleaned_minus.bed"
+
+
+#### counts for all raw read FILES
+for f in *_plus_KevinRoyAfiltered.bedgraph
+  do
+     echo "end reads counting"
+     echo $f
+     bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count.sh $ends_plus_bed $f 4 plus_gene_endpm200.counts
+
+     fminus="${f/_plus/_minus}"
+     echo $fminus
+     bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count.sh $ends_minus_bed $fminus 4 minus_gene_endpm200.counts
+
+     echo "merging ends"
+     cat plus_gene_endpm200.counts minus_gene_endpm200.counts > \
+     bedtools_counts/${f/_plus_KevinRoyAfiltered.bedgraph/_XUTs_endpm200_count_sum_per_anno.txt}
+
+     echo "body reads counting"
+     bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count.sh $body_plus_bed $f 4 plus_gene_body.counts
+
+     echo $fminus
+     bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count.sh $body_minus_bed $fminus 4 minus_gene_body.counts
+
+     echo "merging body"
+     cat plus_gene_body.counts minus_gene_body.counts > \
+     bedtools_counts/${f/_plus_KevinRoyAfiltered.bedgraph/_XUTs_body_endsm200_cleaned_count_sum_per_anno.txt}
+     echo "done"
+  done
+
+rm plus_gene_endpm200.counts
+rm minus_gene_endpm200.counts
+rm plus_gene_body.counts
+rm minus_gene_body.counts
+```
+
+
+
+#### counting normalized data
+in this case we are not doing any count-based analysis  
+-> count directly the normalized reads
+
+```{bash, eval=FALSE}
+## NORMALIZED to S.pombe track files
+cd /Users/schmidm/Documents/Results/Lexogen_RNAseq_2/STAR_bw/norm_and_pA_filtered_bedgraph
+
+#### annotation files
+body_plus_bed="/Users/schmidm/Documents/genomewide_datasets/annotations/sacCer3/Steinmetz_sacCer3_latin_body_endsm200_cleaned_plus.bed"
+body_minus_bed="/Users/schmidm/Documents/genomewide_datasets/annotations/sacCer3/Steinmetz_sacCer3_latin_body_endsm200_cleaned_minus.bed"
+ends_plus_bed="/Users/schmidm/Documents/genomewide_datasets/annotations/sacCer3/Steinmetz_sacCer3_latin_ends_pm200_cleaned_plus.bed"
+ends_minus_bed="/Users/schmidm/Documents/genomewide_datasets/annotations/sacCer3/Steinmetz_sacCer3_latin_ends_pm200_cleaned_minus.bed"
+
+#### counts for input FILES
+for f in *input*_plus_KevinRoyAfiltered.bedgraph
+  do
+     echo "end reads counting"
+     echo $f
+     bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count.sh $ends_plus_bed $f 4 plus_gene_endpm200.counts
+
+     fminus="${f/_plus/_minus}"
+     echo $fminus
+     bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count.sh $ends_minus_bed $fminus 4 minus_gene_endpm200.counts
+
+     echo "merging ends"
+     cat plus_gene_endpm200.counts minus_gene_endpm200.counts > \
+     bedtools_counts/${f/_plus_KevinRoyAfiltered.bedgraph/_endpm200_count_sum_per_anno.txt}
+
+     echo "body reads counting"
+     bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count.sh $body_plus_bed $f 4 plus_gene_body.counts
+
+     echo $fminus
+     bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count.sh $body_minus_bed $fminus 4 minus_gene_body.counts
+
+     echo "merging body"
+     cat plus_gene_body.counts minus_gene_body.counts > \
+     bedtools_counts/${f/_plus_KevinRoyAfiltered.bedgraph/_body_endsm200_cleaned_count_sum_per_anno.txt}
+     echo "done"
+  done
+
+rm plus_gene_endpm200.counts
+rm minus_gene_endpm200.counts
+rm plus_gene_body.counts
+rm minus_gene_body.counts
+
+
+
+
+#### counts for BGsub IP
+for f in *ip*_plus_KevinRoyAfiltered_BGsub.bedgraph
+  do
+     fminus="${f/_plus/_minus}"
+     echo "plus strand file "$f
+     echo "minus strand file "$fminus
+
+     echo "end reads counting"
+     bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count.sh $ends_plus_bed $f 4 plus_gene_endpm200.counts
+     bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count.sh $ends_minus_bed $fminus 4 minus_gene_endpm200.counts
+
+     echo "merging ends"
+     cat plus_gene_endpm200.counts minus_gene_endpm200.counts > \
+     bedtools_counts/${f/_plus_KevinRoyAfiltered_BGsub.bedgraph/_BGsub_endpm200_count_sum_per_anno.txt}
+
+     echo "body reads counting"
+     bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count.sh $body_plus_bed $f 4 plus_gene_body.counts
+     bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count.sh $body_minus_bed $fminus 4 minus_gene_body.counts
+
+     echo "merging body"
+     cat plus_gene_body.counts minus_gene_body.counts > \
+     bedtools_counts/${f/_plus_KevinRoyAfiltered_BGsub.bedgraph/_BGsub_body_endsm200_cleaned_count_sum_per_anno.txt}
+
+     echo "done"
+  done
+
+rm plus_gene_endpm200.counts
+rm minus_gene_endpm200.counts
+rm plus_gene_body.counts
+rm minus_gene_body.counts
+
+#### counts for NON-BGsub IP
+for f in *ip*_plus_KevinRoyAfiltered.bedgraph
+  do
+     fminus="${f/_plus/_minus}"
+     echo "plus strand file "$f
+     echo "minus strand file "$fminus
+
+     echo "end reads counting"
+     bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count.sh $ends_plus_bed $f 4 plus_gene_endpm200.counts
+     bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count.sh $ends_minus_bed $fminus 4 minus_gene_endpm200.counts
+
+     echo "merging ends"
+     cat plus_gene_endpm200.counts minus_gene_endpm200.counts > \
+     bedtools_counts/${f/_plus_KevinRoyAfiltered.bedgraph/_endpm200_count_sum_per_anno.txt}
+
+     echo "body reads counting"
+     bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count.sh $body_plus_bed $f 4 plus_gene_body.counts
+     bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count.sh $body_minus_bed $fminus 4 minus_gene_body.counts
+
+     echo "merging body"
+     cat plus_gene_body.counts minus_gene_body.counts > \
+     bedtools_counts/${f/_plus_KevinRoyAfiltered.bedgraph/_body_endsm200_cleaned_count_sum_per_anno.txt}
+
+     echo "done"
+  done
+
+rm plus_gene_endpm200.counts
+rm minus_gene_endpm200.counts
+rm plus_gene_body.counts
+rm minus_gene_body.counts
+```
+
+
+#### body and end counting normalized XUTs
+
+```{bash, eval = FALSE}
+#### NORMALIZED to S.pombe input FILES
+
+body_plus_bed="/Users/schmidm/Documents/genomewide_datasets/Expression/Morillon_XUTs/GSE69384_XUTs_body_endsm200_cleaned2x_plus.bed"
+body_minus_bed="/Users/schmidm/Documents/genomewide_datasets/Expression/Morillon_XUTs/GSE69384_XUTs_body_endsm200_cleaned2x_minus.bed"
+ends_plus_bed="/Users/schmidm/Documents/genomewide_datasets/Expression/Morillon_XUTs/GSE69384_XUTs_ends_pm200_cleaned_plus.bed"
+ends_minus_bed="/Users/schmidm/Documents/genomewide_datasets/Expression/Morillon_XUTs/GSE69384_XUTs_ends_pm200_cleaned_minus.bed"
+
+
+cd /Users/schmidm/Documents/Results/Lexogen_RNAseq_2/STAR_bw/norm_and_pA_filtered_bedgraph
+
+
+#### Inputs
+
+for f in *input*_plus_KevinRoyAfiltered.bedgraph
+  do
+    echo $f
+    echo " end reads counting"
+    bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count.sh $ends_plus_bed $f 4 plus_gene_endpm200.counts
+
+    fminus="${f/_plus/_minus}"
+    echo "  ${fminus}"
+    bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count.sh $ends_minus_bed $fminus 4 minus_gene_endpm200.counts
+
+    echo "  merging ends"
+    cat plus_gene_endpm200.counts minus_gene_endpm200.counts > \
+    bedtools_counts/${f/_plus_KevinRoyAfiltered.bedgraph/_XUTs_endpm200_cleaned_count_sum_per_anno.txt}
+  
+
+    echo " body reads counting"
+    bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count.sh $body_plus_bed $f 4 plus_gene_body.counts
+
+    echo "  ${fminus}"
+    bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count.sh $body_minus_bed $fminus 4 minus_gene_body.counts
+
+    echo "  merging body"
+    cat plus_gene_body.counts minus_gene_body.counts > \
+    bedtools_counts/${f/_plus_KevinRoyAfiltered.bedgraph/_XUTs_body_endsm200_cleaned2x_count_sum_per_anno.txt}
+
+    echo " done"
+  done
+
+rm plus_gene_endpm200.counts
+rm minus_gene_endpm200.counts
+rm plus_gene_body.counts
+rm minus_gene_body.counts
+
+
+
+
+#### BGsub IP NORMALIZED to S.pombe FILES
+for f in *ip*_plus_KevinRoyAfiltered_BGsub.bedgraph
+  do
+    fminus="${f/_plus/_minus}"
+    echo "plus strand file "$f
+    echo "minus strand file "$fminus
+
+    echo "end reads counting"
+    bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count.sh $ends_plus_bed $f 4 plus_gene_endpm200.counts
+    bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count.sh $ends_minus_bed $fminus 4 minus_gene_endpm200.counts
+
+    echo "merging ends"
+    cat plus_gene_endpm200.counts minus_gene_endpm200.counts > \
+    bedtools_counts/${f/_plus_KevinRoyAfiltered_BGsub.bedgraph/_BGsub_XUTs_endpm200_cleaned_count_sum_per_anno.txt}
+
+    echo "body reads counting"
+    bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count.sh $body_plus_bed $f 4 plus_gene_body.counts
+    bash /Users/schmidm/ms_tools/MS_Metagene_Tools/bed_count.sh $body_minus_bed $fminus 4 minus_gene_body.counts
+
+    echo "merging body"
+    cat plus_gene_body.counts minus_gene_body.counts > \
+    bedtools_counts/${f/_plus_KevinRoyAfiltered_BGsub.bedgraph/_BGsub_XUTs_body_endsm200_cleaned2x_count_sum_per_anno.txt}
+
+    echo "done"
+  done
+
+rm plus_gene_endpm200.counts
+rm minus_gene_endpm200.counts
+rm plus_gene_body.counts
+rm minus_gene_body.counts
+```
+
+
+
+
+
+```{r}
+sessionInfo()
+```
+
+
+
